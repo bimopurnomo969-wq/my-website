@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Kalkulator Rumus Kelas 10 Semester 2</title>
+    <link rel="manifest" href="manifest.json">
+    <meta name="theme-color" content="#2b6cb0">
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+        body {
+            background-color: #f7fafc;
+            color: #2d3748;
+            padding: 15px;
+        }
+        .container {
+            max-width: 600px;
+            margin: 0 auto;
+            background: white;
+            padding: 20px;
+            border-radius: 12px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+        }
+        header {
+            text-align: center;
+            margin-bottom: 20px;
+            border-bottom: 2px solid #e2e8f0;
+            padding-bottom: 15px;
+        }
+        h1 {
+            font-size: 20px;
+            color: #2b6cb0;
+        }
+        p.subtitle {
+            font-size: 13px;
+            color: #718096;
+            margin-top: 5px;
+        }
+        .search-box {
+            margin-bottom: 20px;
+        }
+        input[type="text"] {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #cbd5e0;
+            border-radius: 8px;
+            font-size: 15px;
+            outline: none;
+            transition: border-color 0.2s;
+        }
+        input[type="text"]:focus {
+            border-color: #2b6cb0;
+        }
+        .category-tabs {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+        .tab-btn {
+            flex: 1;
+            padding: 10px;
+            border: none;
+            background: #edf2f7;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: bold;
+            color: #4a5568;
+            transition: all 0.2s;
+        }
+        .tab-btn.active {
+            background: #2b6cb0;
+            color: white;
+        }
+        .rumus-item {
+            background: #fff;
+            border: 1px solid #e2e8f0;
+            border-radius: 8px;
+            padding: 15px;
+            margin-bottom: 15px;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        .rumus-item:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 10px rgba(0,0,0,0.05);
+        }
+        .rumus-title {
+            font-weight: bold;
+            color: #2d3748;
+            font-size: 16px;
+        }
+        .rumus-formula {
+            font-family: 'Times New Roman', Times, serif;
+            font-style: italic;
+            color: #e53e3e;
+            margin-top: 5px;
+            font-size: 15px;
+        }
+        .rumus-desc {
+            font-size: 13px;
+            color: #718096;
+            margin-top: 5px;
+        }
+        .calculator-box {
+            display: none;
+            background: #f7fafc;
+            border: 2px solid #2b6cb0;
+            border-radius: 8px;
+            padding: 15px;
+            margin-bottom: 20px;
+        }
+        .calculator-box.active {
+            display: block;
+        }
+        .input-group {
+            margin-bottom: 12px;
+        }
+        .input-group label {
+            display: block;
+            font-size: 14px;
+            font-weight: 600;
+            margin-bottom: 5px;
+        }
+        .input-group input {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #cbd5e0;
+            border-radius: 6px;
+            font-size: 15px;
+        }
+        .calc-btn {
+            width: 100%;
+            padding: 12px;
+            background: #28a745;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            font-size: 16px;
+            font-weight: bold;
+            cursor: pointer;
+            margin-top: 5px;
+        }
+        .calc-btn:hover {
+            background: #218838;
+        }
+        .result-box {
+            margin-top: 15px;
+            padding: 12px;
+            background: #ebf8ff;
+            border-left: 4px solid #3182ce;
+            border-radius: 4px;
+        }
+        .explanation {
+            font-size: 13px;
+            color: #4a5568;
+            margin-top: 8px;
+            line-height: 1.4;
+            background: #fff;
+            padding: 8px;
+            border-radius: 4px;
+            border: 1px dashed #cbd5e0;
+        }
+        .btn-notif {
+            width: 100%;
+            padding: 10px;
+            background: #805ad5;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            font-weight: bold;
+            cursor: pointer;
+            margin-top: 15px;
+        }
+        .close-calc {
+            float: right;
+            cursor: pointer;
+            color: #a0aec0;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <header>
+        <h1>Kalkulator Rumus Pintar Kelas 10</h1>
+        <p class="subtitle">Semester 2 • Matematika & IPA (Fisika/Kimia) Tanpa API</p>
+        <button class="btn-notif" onclick="mintaIzinNotif()">Aktifkan Fitur Notifikasi</button>
+    </header>
+
+    <div id="calculatorBox" class="calculator-box">
+        <span class="close-calc" onclick="tutupKalkulator()">X</span>
+        <h3 id="calcTitle" style="color:#2b6cb0; margin-bottom:10px;">Nama Rumus</h3>
+        <div id="dynamicInputs"></div>
+        <button class="calc-btn" onclick="prosesHitung()">Hitung Sekarang</button>
+        <button class="calc-btn" style="background:#3182ce; margin-top:5px;" onclick="kirimKeNotifikasi()">Kirim Pertanyaan ke Notif</button>
+        <div id="resultBox" class="result-box" style="display:none;">
+            <strong>Hasil:</strong> <span id="calcResult">-</span>
+            <div id="calcExplanation" class="explanation"></div>
+        </div>
+    </div>
+
+    <div class="category-tabs">
+        <button class="tab-btn active" onclick="filterKategori('semua', this)">Semua</button>
+        <button class="tab-btn" onclick="filterKategori('mtk', this)">Matematika</button>
+        <button class="tab-btn" onclick="filterKategori('ipa', this)">IPA (Fisika/Kimia)</button>
+    </div>
+
+    <div class="search-box">
+        <input type="text" id="searchBar" placeholder="Cari rumus... (misal: Trigonometri, Usaha, Mol)" onkeyup="cariRumus()">
+    </div>
+
+    <div id="rumusList"></div>
+</div>
+
+<script src="script.js"></script>
+<script>
+    if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.register('sw.js')
+        .then(reg => console.log('Service Worker Berhasil Terdaftar!', reg))
+        .catch(err => console.error('Gagal mendaftarkan Service Worker', err));
+    }
+
+    if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.addEventListener('message', event => {
+            if (event.data.type === 'HASIL_NOTIFIKASI') {
+                alert("Jawaban Diterima dari Notifikasi!\n\n" + event.data.data);
+                document.getElementById('calculatorBox').style.display = 'block';
+                document.getElementById('resultBox').style.display = 'block';
+                document.getElementById('calcResult').innerText = event.data.angkaHasil;
+                document.getElementById('calcExplanation').innerText = event.data.data;
+            }
+        });
+    }
+</script>
+
+</body>
+</html>

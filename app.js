@@ -1,5 +1,7 @@
-/* ChronoStar X — App Core (Enhanced & Customized) */
+/* ChronoStar X — App Core
+   Supabase auth, roles, real-time presence, activity logging, news/info CMS, profile/bio-link page. */
 
+// ---- Supabase config (publishable key is safe to expose client-side; RLS enforces access) ----
 const SUPABASE_URL = 'https://ajsqtqxcpnqhjhyphiiw.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_7bdRFYA7g6mQirAz8mr8Fg_L90CmrSk';
 const { createClient } = supabase;
@@ -9,33 +11,43 @@ let currentUser = null;
 let currentProfile = null;
 let presenceChannel = null;
 
-// ---- Activity logging with enhanced metadata ----
+// ---- Activity logging ----
 async function logActivity(action, meta = {}) {
   if (!currentUser) return;
-  try { 
-    await sb.from('activity_log').insert({ 
-      user_id: currentUser.id, 
-      action, 
-      meta: { ...meta, timestamp: new Date().toISOString(), ua: navigator.userAgent.substring(0, 50) } 
-    }); 
-  } catch (e) { console.warn('Gagal mencatat aktivitas', e); }
+  try { await sb.from('activity_log').insert({ user_id: currentUser.id, action, meta }); } catch (e) { console.warn('activity log failed', e); }
   const el = document.getElementById('activity-list');
   if (el && document.getElementById('tab-profile').classList.contains('active')) loadActivityList();
 }
-
 function actionLabel(action) {
-  const labels = { 
-    login: 'Masuk ke sistem', 
-    tool_open: 'Membuka modul tool', 
-    post_add: 'Menambahkan publikasi', 
-    post_delete: 'Menghapus publikasi', 
-    profile_update: 'Memperbarui data profil',
-    export_data: 'Mengekspor riwayat'
-  };
+  const labels = { login: 'Masuk ke akun', tool_open: 'Membuka tool', post_add: 'Menambahkan post', post_delete: 'Menghapus post', profile_update: 'Memperbarui profil' };
   return labels[action] || action;
 }
 
-// ---- Auth Manager with Auto-Refresh & Feedback ----
+// ---- Auth ----
+async function onAuthed(user, opts = {}) {
+  currentUser = user;
+  await loadProfile();
+  setupPresence();
+  renderAuthState();
+  if (opts.logLogin) logActivity('login', {});
+}
+async function loadProfile() {
+  if (!currentUser) return;
+  let { data, error } = await sb.from('profiles').select('*').eq('id', currentUser.id).single();
+  if (error || !data) {
+    // No profile row yet — happens for accounts created straight in Supabase (e.g. the first
+    // owner account) or any other gap before the signup trigger ran. Self-heal instead of
+    // leaving the person stuck on the login screen.
+    const fallbackUsername = (currentUser.user_metadata && currentUser.user_metadata.username) || (currentUser.email ? currentUser.email.split('@')[0] : 'user');
+    const { data: created, error: createErr } = await sb.from('profiles')
+      .upsert({ id: currentUser.id, username: fallbackUsername, role: 'member' }, { onConflict: 'id' })
+      .select().single();
+    if (!createErr) data = created;
+    else console.warn('profile auto-repair failed', createErr);
+  }
+  currentProfile = data || null;
+}
+
 const AuthUI = {
   switch(which) {
     document.getElementById('tab-btn-login').classList.toggle('active', which === 'login');
@@ -47,118 +59,97 @@ const AuthUI = {
     const email = document.getElementById('login-email').value.trim();
     const password = document.getElementById('login-password').value;
     const msg = document.getElementById('login-msg'), btn = document.getElementById('login-btn');
-    if (!email || !password) { msg.className = 'form-msg error'; msg.innerText = 'Email dan password wajib diisi.'; return; }
-    btn.disabled = true; msg.className = 'form-msg'; msg.innerText = 'Autentikasi neural...';
+    if (!email || !password) { msg.className = 'form-msg error'; msg.innerText = 'Isi email dan password.'; return; }
+    btn.disabled = true; msg.className = 'form-msg'; msg.innerText = 'Memproses...';
     const { data, error } = await sb.auth.signInWithPassword({ email, password });
     btn.disabled = false;
     if (error) { msg.className = 'form-msg error'; msg.innerText = error.message; return; }
-    msg.className = 'form-msg success'; msg.innerText = 'Akses diterima!';
+    msg.className = 'form-msg success'; msg.innerText = 'Berhasil masuk!';
     await onAuthed(data.user, { logLogin: true });
-    ChronoStar.showToast('Selamat datang kembali di ChronoStar X!', 'success');
+    ChronoStar.showToast('Selamat datang kembali!', 'success');
   },
   async register() {
     const username = document.getElementById('reg-username').value.trim();
     const email = document.getElementById('reg-email').value.trim();
     const password = document.getElementById('reg-password').value;
     const msg = document.getElementById('register-msg'), btn = document.getElementById('register-btn');
-    if (!username || !email || !password) { msg.className = 'form-msg error'; msg.innerText = 'Semua kolom wajib diisi.'; return; }
+    if (!username || !email || !password) { msg.className = 'form-msg error'; msg.innerText = 'Lengkapi semua kolom.'; return; }
     if (password.length < 6) { msg.className = 'form-msg error'; msg.innerText = 'Password minimal 6 karakter.'; return; }
-    btn.disabled = true; msg.className = 'form-msg'; msg.innerText = 'Mendaftarkan identitas...';
+    btn.disabled = true; msg.className = 'form-msg'; msg.innerText = 'Membuat akun...';
     const { data, error } = await sb.auth.signUp({ email, password, options: { data: { username } } });
     btn.disabled = false;
     if (error) { msg.className = 'form-msg error'; msg.innerText = error.message; return; }
-    if (data.session) { 
-      msg.className = 'form-msg success'; msg.innerText = 'Akun aktif!'; 
-      await onAuthed(data.user, { logLogin: true }); 
-    } else { 
-      msg.className = 'form-msg success'; msg.innerText = 'Registrasi berhasil! Cek email untuk konfirmasi.'; 
-    }
+    if (data.session) { msg.className = 'form-msg success'; msg.innerText = 'Akun dibuat & masuk!'; await onAuthed(data.user, { logLogin: true }); }
+    else { msg.className = 'form-msg success'; msg.innerText = 'Akun dibuat! Cek email kamu untuk konfirmasi sebelum masuk.'; }
   },
   async logout() {
     await sb.auth.signOut();
     if (presenceChannel) { sb.removeChannel(presenceChannel); presenceChannel = null; }
     currentUser = null; currentProfile = null;
     renderAuthState();
-    ChronoStar.showToast('Sesi terputus. Keluar.', 'info');
+    ChronoStar.showToast('Berhasil keluar', 'info');
     switchTabByNav('home');
   }
 };
-
-async function onAuthed(user, opts = {}) {
-  currentUser = user;
-  await loadProfile();
-  setupPresence();
-  renderAuthState();
-  if (opts.logLogin) logActivity('login', {});
-}
-
-async function loadProfile() {
-  if (!currentUser) return;
-  const { data, error } = await sb.from('profiles').select('*').eq('id', currentUser.id).single();
-  if (!error) currentProfile = data;
-}
 
 function renderAuthState() {
   const homeStatus = document.getElementById('home-status'), homeUsername = document.getElementById('home-username'), homeAvatar = document.getElementById('home-avatar');
   const navLabel = document.getElementById('nav-profile-label'), authSection = document.getElementById('auth-section'), profileSection = document.getElementById('profile-section');
   if (currentUser && currentProfile) {
-    homeStatus.innerHTML = `<span class="online-indicator">● ONLINE</span> &nbsp; <span style="color:var(--text-sub);">${currentProfile.role === 'owner' ? 'ROOT ADMIN' : 'MEMBER'}</span>`;
+    homeStatus.innerHTML = `<span class="online-indicator">● ONLINE</span> &nbsp; <span style="color:var(--text-sub);">${currentProfile.role === 'owner' ? 'OWNER' : 'MEMBER'}</span>`;
     homeUsername.innerText = currentProfile.username || currentUser.email;
     homeAvatar.innerText = (currentProfile.username || currentUser.email || '?')[0].toUpperCase();
     navLabel.innerText = 'Profil';
     authSection.style.display = 'none'; profileSection.style.display = 'block';
     renderProfileSection();
   } else {
-    homeStatus.innerHTML = `<span class="offline-indicator">● TAMU</span> &nbsp; <span style="color:var(--text-sub);">sesi tamu</span>`;
-    homeUsername.innerText = 'ChronoStar X'; homeAvatar.innerText = 'C';
+    homeStatus.innerHTML = `<span class="offline-indicator">● TAMU</span> &nbsp; <span style="color:var(--text-sub);">belum login</span>`;
+    homeUsername.innerText = 'ChronoStar x'; homeAvatar.innerText = 'C';
     navLabel.innerText = 'Login';
     authSection.style.display = 'block'; profileSection.style.display = 'none';
   }
   renderOwnerButtons();
   loadNews(); loadInfo();
 }
-
 function renderOwnerButtons() {
   const isOwner = currentProfile && currentProfile.role === 'owner';
   document.getElementById('news-add-wrap').innerHTML = isOwner ? `<span class="add-btn" onclick="AdminUI.addPost('news')">+ TAMBAH</span>` : '';
   document.getElementById('info-add-wrap').innerHTML = isOwner ? `<span class="add-btn" onclick="AdminUI.addPost('info')">+ TAMBAH</span>` : '';
 }
 
-// ---- Profile & Bio Management with Quick Export ----
+// ---- Profile / bio-link ----
 function renderProfileSection() {
   const p = currentProfile;
   document.getElementById('profile-username').innerText = p.username || currentUser.email;
-  document.getElementById('profile-bio').innerText = p.bio || 'Belum ada bio siber yang diatur.';
+  document.getElementById('profile-bio').innerText = p.bio || 'Belum ada bio.';
   const avatarEl = document.getElementById('profile-avatar');
   avatarEl.innerHTML = p.avatar_url ? `<img src="${CU.esc(p.avatar_url)}">` : (p.username || '?')[0].toUpperCase();
-  document.getElementById('profile-access').innerText = p.role === 'owner' ? 'Root Admin (Owner)' : 'Member Terverifikasi';
+  document.getElementById('profile-access').innerText = p.role === 'owner' ? 'Owner / Root Admin' : 'Member';
   document.getElementById('profile-joined').innerText = new Date(p.created_at).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' });
-  document.getElementById('profile-role-badge').innerHTML = p.role === 'owner' ? `<div class="profile-badge-owner">SYSTEM FOUNDER</div>` : `<div class="profile-badge-member">ACTIVE MEMBER</div>`;
+  document.getElementById('profile-role-badge').innerHTML = p.role === 'owner' ? `<div class="profile-badge-owner">OWNER & FOUNDER</div>` : `<div class="profile-badge-member">MEMBER</div>`;
   document.getElementById('owner-admin-zone').style.display = p.role === 'owner' ? 'block' : 'none';
-  
   const links = Array.isArray(p.links) ? p.links : [];
   document.getElementById('links-list').innerHTML = links.length
     ? links.map(l => `<a href="${CU.esc(l.url)}" target="_blank" rel="noopener" class="link-item">${CU.esc(l.label)} <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 17L17 7M17 7H7M17 7V17"/></svg></a>`).join('')
-    : '<p style="font-size:11px;color:var(--text-sub);text-align:center;">Belum ada tautan ditambahkan.</p>';
+    : '<p style="font-size:11px;color:var(--text-sub);text-align:center;">Belum ada link.</p>';
   loadActivityList();
 }
-
 async function loadActivityList() {
   if (!currentUser) return;
   const { data, count } = await sb.from('activity_log').select('*', { count: 'exact' }).eq('user_id', currentUser.id).order('created_at', { ascending: false }).limit(15);
   const countEl = document.getElementById('profile-activity-count'); if (countEl) countEl.innerText = count || 0;
   const el = document.getElementById('activity-list'); if (!el) return;
   el.innerHTML = (data && data.length) ? data.map(a => `<div class="activity-item"><div class="activity-dot"></div><div><b>${CU.esc(actionLabel(a.action))}</b><span>${new Date(a.created_at).toLocaleString('id-ID')}</span></div></div>`).join('')
-    : '<p style="font-size:11px;color:var(--text-sub);text-align:center;">Belum ada aktivitas tercatat.</p>';
+    : '<p style="font-size:11px;color:var(--text-sub);text-align:center;">Belum ada aktivitas.</p>';
 }
 
 const ProfileUI = {
   openEdit() {
-    ModalUI.openCustom('Edit Profil', 'Perbarui identitas neural kamu', `
+    ModalUI.openCustom('Edit Profil', '', `
       <div class="form-group"><label>Username</label><input class="form-input" id="edit-username" value="${CU.esc(currentProfile.username || '')}"></div>
       <div class="form-group"><label>Bio</label><textarea class="form-textarea" id="edit-bio">${CU.esc(currentProfile.bio || '')}</textarea></div>
-      <div class="form-group"><label>URL Avatar</label><input class="form-input" id="edit-avatar" value="${CU.esc(currentProfile.avatar_url || '')}" placeholder="https://..."></div>
-      <button class="form-btn" onclick="ProfileUI.saveEdit()">Simpan Perubahan</button>
+      <div class="form-group"><label>URL Avatar (opsional)</label><input class="form-input" id="edit-avatar" value="${CU.esc(currentProfile.avatar_url || '')}" placeholder="https://..."></div>
+      <button class="form-btn" onclick="ProfileUI.saveEdit()">Simpan</button>
       <div class="form-msg" id="edit-msg"></div>`);
   },
   async saveEdit() {
@@ -170,13 +161,13 @@ const ProfileUI = {
     if (error) { msg.className = 'form-msg error'; msg.innerText = error.message; return; }
     currentProfile = { ...currentProfile, username, bio, avatar_url };
     renderAuthState(); logActivity('profile_update', {}); ModalUI.close();
-    ChronoStar.showToast('Profil berhasil diperbarui', 'success');
+    ChronoStar.showToast('Profil diperbarui', 'success');
   },
   addLink() {
-    ModalUI.openCustom('Tambah Bio Link', 'Sematkan tautan eksternal', `
-      <div class="form-group"><label>Label Tautan</label><input class="form-input" id="link-label" placeholder="mis: GitHub / Telegram"></div>
-      <div class="form-group"><label>URL Tujuan</label><input class="form-input" id="link-url" placeholder="https://..."></div>
-      <button class="form-btn" onclick="ProfileUI.saveLink()">Tambah Tautan</button>
+    ModalUI.openCustom('Tambah Bio Link', '', `
+      <div class="form-group"><label>Label</label><input class="form-input" id="link-label" placeholder="mis: Instagram"></div>
+      <div class="form-group"><label>URL</label><input class="form-input" id="link-url" placeholder="https://..."></div>
+      <button class="form-btn" onclick="ProfileUI.saveLink()">Tambah</button>
       <div class="form-msg" id="link-msg"></div>`);
   },
   async saveLink() {
@@ -189,18 +180,17 @@ const ProfileUI = {
     const { error } = await sb.from('profiles').update({ links }).eq('id', currentUser.id);
     if (error) { msg.className = 'form-msg error'; msg.innerText = error.message; return; }
     currentProfile.links = links; renderProfileSection(); ModalUI.close();
-    ChronoStar.showToast('Tautan berhasil ditambahkan', 'success');
   }
 };
 
-// ---- Admin / Owner Panel Extensions ----
+// ---- Admin / Owner panel ----
 const AdminUI = {
   addPost(type) {
-    ModalUI.openCustom(type === 'news' ? 'Tambah Berita Sistem' : 'Tambah Informasi Resmi', 'Broadcast untuk seluruh warga jaringan', `
+    ModalUI.openCustom(type === 'news' ? 'Tambah Berita' : 'Tambah Informasi', 'Tampil untuk semua pengguna', `
       <div class="form-group"><label>Judul</label><input class="form-input" id="post-title"></div>
-      <div class="form-group"><label>Konten</label><textarea class="form-textarea" id="post-content"></textarea></div>
-      ${type === 'news' ? '<div class="form-group"><label>URL Gambar Banner (Opsional)</label><input class="form-input" id="post-image" placeholder="https://..."></div>' : ''}
-      <button class="form-btn" onclick="AdminUI.savePost('${type}')">Broadcast Publikasi</button>
+      <div class="form-group"><label>Isi</label><textarea class="form-textarea" id="post-content"></textarea></div>
+      ${type === 'news' ? '<div class="form-group"><label>URL Gambar (opsional)</label><input class="form-input" id="post-image" placeholder="https://..."></div>' : ''}
+      <button class="form-btn" onclick="AdminUI.savePost('${type}')">Publikasikan</button>
       <div class="form-msg" id="post-msg"></div>`);
   },
   async savePost(type) {
@@ -209,37 +199,37 @@ const AdminUI = {
     const imageEl = document.getElementById('post-image');
     const image_url = imageEl ? imageEl.value.trim() : null;
     const msg = document.getElementById('post-msg');
-    if (!title || !content) { msg.className = 'form-msg error'; msg.innerText = 'Judul dan konten wajib diisi.'; return; }
+    if (!title || !content) { msg.className = 'form-msg error'; msg.innerText = 'Lengkapi judul dan isi.'; return; }
     const { error } = await sb.from('posts').insert({ type, title, content, image_url: image_url || null, created_by: currentUser.id });
     if (error) { msg.className = 'form-msg error'; msg.innerText = error.message; return; }
     ModalUI.close(); logActivity('post_add', { type, title });
-    ChronoStar.showToast('Publikasi berhasil disiarkan', 'success');
+    ChronoStar.showToast('Berhasil dipublikasikan', 'success');
     if (type === 'news') loadNews(); else loadInfo();
   },
   async deletePost(id, type) {
     const { error } = await sb.from('posts').delete().eq('id', id);
-    if (error) { ChronoStar.showToast('Gagal menghapus publikasi', 'error'); return; }
+    if (error) { ChronoStar.showToast('Gagal menghapus', 'error'); return; }
     logActivity('post_delete', { id });
-    ChronoStar.showToast('Publikasi dihapus dari sistem', 'info');
+    ChronoStar.showToast('Post dihapus', 'info');
     if (type === 'news') loadNews(); else loadInfo();
   },
   async openAllActivity() {
     const { data } = await sb.from('activity_log').select('*, profiles(username)').order('created_at', { ascending: false }).limit(50);
-    const html = (data && data.length) ? data.map(a => `<div class="activity-item"><div class="activity-dot"></div><div><b>${CU.esc((a.profiles && a.profiles.username) || 'user')}</b> — ${CU.esc(actionLabel(a.action))}<span>${new Date(a.created_at).toLocaleString('id-ID')}</span></div></div>`).join('') : '<p style="font-size:11px;color:var(--text-sub);">Belum ada log tercatat.</p>';
-    ModalUI.openCustom('Log Aktivitas Global', '50 aktivitas mutakhir di jaringan', html);
+    const html = (data && data.length) ? data.map(a => `<div class="activity-item"><div class="activity-dot"></div><div><b>${CU.esc((a.profiles && a.profiles.username) || 'user')}</b> — ${CU.esc(actionLabel(a.action))}<span>${new Date(a.created_at).toLocaleString('id-ID')}</span></div></div>`).join('') : '<p style="font-size:11px;color:var(--text-sub);">Belum ada aktivitas.</p>';
+    ModalUI.openCustom('Log Aktivitas Semua User', '50 aktivitas terbaru', html);
   },
   async openUserList() {
     const { data } = await sb.from('profiles').select('username, role, created_at').order('created_at', { ascending: false }).limit(100);
-    const html = (data && data.length) ? data.map(u => `<div class="activity-item"><div class="activity-dot" style="background:${u.role === 'owner' ? 'var(--neon-green)' : 'var(--neon-cyan)'}"></div><div><b>${CU.esc(u.username || 'Tanpa Nama')}</b><span>${u.role.toUpperCase()} • Gabung ${new Date(u.created_at).toLocaleDateString('id-ID')}</span></div></div>`).join('') : '<p style="font-size:11px;color:var(--text-sub);">Belum ada member terdaftar.</p>';
-    ModalUI.openCustom('Direktori Member', `${data ? data.length : 0} akun terdaftar di database`, html);
+    const html = (data && data.length) ? data.map(u => `<div class="activity-item"><div class="activity-dot" style="background:${u.role === 'owner' ? 'var(--neon-green)' : 'var(--neon-cyan)'}"></div><div><b>${CU.esc(u.username || '(tanpa nama)')}</b><span>${u.role.toUpperCase()} • bergabung ${new Date(u.created_at).toLocaleDateString('id-ID')}</span></div></div>`).join('') : '<p style="font-size:11px;color:var(--text-sub);">Belum ada member.</p>';
+    ModalUI.openCustom('Daftar Member', `${data ? data.length : 0} akun terdaftar`, html);
   }
 };
 
-// ---- CMS Content Loaders ----
+// ---- News & Info (public read, owner write) ----
 async function loadNews() {
   const { data, error } = await sb.from('posts').select('*').eq('type', 'news').order('created_at', { ascending: false }).limit(10);
   const el = document.getElementById('news-list'); if (!el) return;
-  if (error || !data || !data.length) { el.innerHTML = `<div class="card" style="text-align:center;color:var(--text-sub);font-size:12px;">Belum ada berita aktif.</div>`; return; }
+  if (error || !data || !data.length) { el.innerHTML = `<div class="card" style="text-align:center;color:var(--text-sub);font-size:12px;">Belum ada berita.</div>`; return; }
   el.innerHTML = data.map(n => `
     <div class="news-post" style="margin:0 16px 14px 16px;">
       ${n.image_url ? `<img src="${CU.esc(n.image_url)}" alt="">` : ''}
@@ -250,11 +240,10 @@ async function loadNews() {
       </div>
     </div>`).join('');
 }
-
 async function loadInfo() {
   const { data, error } = await sb.from('posts').select('*').eq('type', 'info').order('created_at', { ascending: false }).limit(20);
   const el = document.getElementById('info-list'); if (!el) return;
-  if (error || !data || !data.length) { el.innerHTML = `<p style="font-size:11px;color:var(--text-sub);">Belum ada instruksi protokol tambahan.</p>`; return; }
+  if (error || !data || !data.length) { el.innerHTML = `<p style="font-size:11px;color:var(--text-sub);">Belum ada pengumuman tambahan.</p>`; return; }
   el.innerHTML = data.map(n => `
     <div style="background:#121522;border:1px solid var(--card-border);padding:12px;border-radius:12px;">
       <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">
@@ -265,7 +254,7 @@ async function loadInfo() {
     </div>`).join('');
 }
 
-// ---- Realtime Presence & Stats ----
+// ---- Presence (real online-user count) & member count ----
 function setupPresence() {
   if (!currentUser || !currentProfile) return;
   if (presenceChannel) sb.removeChannel(presenceChannel);
@@ -277,13 +266,12 @@ function setupPresence() {
     if (status === 'SUBSCRIBED') await presenceChannel.track({ username: currentProfile.username, online_at: new Date().toISOString() });
   });
 }
-
 async function loadMemberCount() {
   const { count } = await sb.from('profiles').select('*', { count: 'exact', head: true });
   const el = document.getElementById('stat-members'); if (el) el.innerText = count ?? 0;
 }
 
-// ---- Modal, Navigation & UI Engine ----
+// ---- Generic modal ----
 const ModalUI = {
   open(tool) {
     const box = document.getElementById('modal-box');
@@ -304,27 +292,46 @@ const ModalUI = {
   }
 };
 
+// ---- Tool grid, categories, search ----
 let activeCategory = 'all';
 function renderChips() {
   const row = document.getElementById('chip-row');
   row.innerHTML = CATEGORIES.map(c => `<div class="chip ${c.id === activeCategory ? 'active' : ''}" data-cat="${c.id}">${c.label}</div>`).join('');
   row.querySelectorAll('.chip').forEach(chip => chip.onclick = () => { activeCategory = chip.dataset.cat; renderChips(); renderToolGrid(); });
 }
-
-function renderToolGrid(query) {
-  query = (query ?? document.getElementById('global-search-input').value ?? '').toLowerCase().trim();
-  const grid = document.getElementById('tool-grid');
-  const filtered = TOOLS.filter(t => (activeCategory === 'all' || t.cat === activeCategory) && (!query || t.title.toLowerCase().includes(query) || t.desc.toLowerCase().includes(query)));
-  const sub = document.getElementById('tools-subtitle'); if (sub) sub.innerText = `${TOOLS.length} MODUL UTAMA // ${filtered.length} AKTIF`;
-  grid.innerHTML = filtered.length ? filtered.map(t => `
-    <div class="tool-card" data-tool="${t.id}">
+function toolCardHtml(t) {
+  return `<div class="tool-card" data-tool="${t.id}">
       <div class="t-icon"><svg viewBox="0 0 24 24">${CAT_ICON[t.cat]}</svg></div>
       <h4>${CU.esc(t.title)}</h4>
       <p>${CU.esc(t.desc)}</p>
-    </div>`).join('') : `<div class="tool-empty">Modul siber tidak ditemukan.</div>`;
+    </div>`;
+}
+function renderToolGrid(query) {
+  query = (query ?? document.getElementById('global-search-input').value ?? '').toLowerCase().trim();
+  const grid = document.getElementById('tool-grid');
+  const matches = (t) => !query || t.title.toLowerCase().includes(query) || t.desc.toLowerCase().includes(query);
+  let html = '', shown = 0;
+
+  if (activeCategory === 'all' && !query) {
+    // Grouped-by-category view: easier to scan than one long wall of cards.
+    CATEGORIES.filter(c => c.id !== 'all').forEach(cat => {
+      const items = TOOLS.filter(t => t.cat === cat.id);
+      if (!items.length) return;
+      shown += items.length;
+      html += `<div class="tool-group-title">${cat.label}</div><div class="tool-grid-inner">${items.map(toolCardHtml).join('')}</div>`;
+    });
+  } else {
+    const filtered = TOOLS.filter(t => (activeCategory === 'all' || t.cat === activeCategory) && matches(t));
+    shown = filtered.length;
+    html = filtered.length ? `<div class="tool-grid-inner">${filtered.map(toolCardHtml).join('')}</div>` : `<div class="tool-empty">Tidak ada tool yang cocok.</div>`;
+  }
+
+  grid.innerHTML = html;
+  const sub = document.getElementById('tools-subtitle'); if (sub) sub.innerText = `${TOOLS.length} MODUL TERINTEGRASI // ${shown} DITAMPILKAN`;
   grid.querySelectorAll('.tool-card').forEach(card => card.onclick = () => ModalUI.open(TOOLS.find(t => t.id === card.dataset.tool)));
 }
 
+// ---- Tabs & drawer ----
 function switchTab(tabName, element) {
   document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
   document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
@@ -332,18 +339,17 @@ function switchTab(tabName, element) {
   if (element) element.classList.add('active');
   window.scrollTo({ top: 0, behavior: 'smooth' });
 }
-
 function switchTabByNav(tabName) {
   const map = { home: 0, whatsapp: 1, info: 2, tools: 3, profile: 4 };
   switchTab(tabName, document.querySelectorAll('.nav-item')[map[tabName] || 0]);
 }
-
 function toggleDrawer() {
   const drawer = document.getElementById('drawer-menu'), overlay = document.getElementById('drawer-overlay');
   if (drawer.classList.contains('open')) { drawer.classList.remove('open'); overlay.style.display = 'none'; }
   else { drawer.classList.add('open'); overlay.style.display = 'block'; }
 }
 
+// ---- Clock / uptime / ping / toast / search (kept from original, generalized) ----
 class ChronoStarEngine {
   constructor() { this.startTime = Date.now(); this.init(); }
   init() { this.startLiveClock(); this.startUptimeTracker(); this.initRealPingMonitor(); }
@@ -383,9 +389,9 @@ class ChronoStarEngine {
   }
   handleSearch(query) { if (query.trim().length > 0) switchTabByNav('tools'); renderToolGrid(query); }
 }
-
 const ChronoStar = new ChronoStarEngine();
 
+// ---- Init ----
 document.addEventListener('DOMContentLoaded', async () => {
   const label = document.getElementById('tools-count-label'); if (label) label.innerText = TOOLS.length + '+ fitur cyber security';
   renderChips(); renderToolGrid();
@@ -399,5 +405,4 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (event === 'SIGNED_OUT') { currentUser = null; currentProfile = null; renderAuthState(); }
   });
 });
-
 window.addEventListener('beforeunload', () => { if (presenceChannel) sb.removeChannel(presenceChannel); });

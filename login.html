@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Login Admin - Kelas XI-6</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-slate-900 text-slate-100 min-h-screen flex items-center justify-center p-4">
+
+    <div class="max-w-md w-full bg-slate-800 border border-slate-700 rounded-2xl p-6 shadow-xl">
+        <div class="text-center mb-6">
+            <h1 class="text-xl font-bold text-emerald-400">🔐 Login Admin Kelas</h1>
+            <p class="text-xs text-slate-400 mt-1">Khusus pengelola untuk update galeri & tugas</p>
+        </div>
+
+        <form id="login-form" class="space-y-4">
+            <div>
+                <label class="block text-xs font-medium text-slate-300 mb-1">Email Admin</label>
+                <input type="email" id="email" required class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-emerald-500" placeholder="admin@kelas.com">
+            </div>
+            <div>
+                <label class="block text-xs font-medium text-slate-300 mb-1">Password</label>
+                <input type="password" id="password" required class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-emerald-500" placeholder="••••••••">
+            </div>
+            <button type="submit" class="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-semibold py-2 rounded-lg text-sm transition">Masuk</button>
+        </form>
+
+        <div id="error-msg" class="text-red-400 text-xs text-center mt-3 hidden"></div>
+
+        <div class="mt-6 text-center">
+            <a href="index.html" class="text-xs text-slate-400 hover:text-slate-200">&larr; Kembali ke Beranda</a>
+        </div>
+    </div>
+
+    <!-- Skrip Login dengan Supabase -->
+    <script type="module">
+        import { supabase } from './assets/js/supabase.js';
+
+        const form = document.getElementById('login-form');
+        const errorMsg = document.getElementById('error-msg');
+
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const email = document.getElementById('email').value;
+            const password = document.getElementById('password').value;
+
+            errorMsg.classList.add('hidden');
+
+            const { data, error } = await supabase.auth.signInWithPassword({
+                email: email,
+                password: password,
+            });
+
+            if (error) {
+                errorMsg.textContent = "Login Gagal: " + error.message;
+                errorMsg.classList.remove('hidden');
+            } else {
+                alert('Login Berhasil!');
+                window.location.href = 'index.html'; // Kembali ke beranda setelah sukses
+            }
+        });
+    </script>
+
+</body>
+</html>

@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>ChronoStar X - Cyber Security Suite v5.0</title>
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com; style-src 'self' 'unsafe-inline'; img-src 'self' https: data: blob:; connect-src 'self' https: wss:; media-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none';">
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <style>
         :root {
@@ -25,6 +26,10 @@
         }
 
         * { box-sizing: border-box; }
+        button, .tool-btn, .form-btn, .chip, .add-btn, .post-del-btn, .tool-card, .menu-card,
+        .cyber-btn-long, .nav-item, .drawer-item, .menu-trigger, .auth-tab-btn, .modal-close {
+            -webkit-touch-callout: none; -webkit-user-select: none; user-select: none;
+        }
 
         body {
             background-color: var(--bg-color);
@@ -350,6 +355,37 @@
         .drawer-item:hover .drawer-icon { stroke: var(--text-main); }
 
         .tab-content { display: none; }
+        .tab-content.active { display: block; animation: tabIn 0.25s ease; }
+        @keyframes tabIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #22263a; border-radius: 10px; }
+        ::-webkit-scrollbar-thumb:hover { background: #2e3350; }
+        * { scrollbar-width: thin; scrollbar-color: #22263a transparent; }
+
+        .tool-btn, .form-btn, .menu-card, .cyber-btn-long, .chip, .nav-item, .tool-card, .drawer-item, .modal-close, .auth-tab-btn {
+            transition: transform 0.12s ease, border-color 0.2s ease, background 0.2s ease;
+        }
+        .tool-btn:active, .form-btn:active, .menu-card:active, .cyber-btn-long:active,
+        .chip:active, .nav-item:active, .drawer-item:active, .modal-close:active, .auth-tab-btn:active {
+            transform: scale(0.96);
+        }
+
+        .online-indicator { animation: glowPulse 2.2s ease-in-out infinite; }
+        @keyframes glowPulse { 0%, 100% { text-shadow: 0 0 6px rgba(0,255,102,0.35); } 50% { text-shadow: 0 0 16px rgba(0,255,102,0.8); } }
+        .chip.active { box-shadow: 0 0 14px rgba(255,255,255,0.18); }
+
+        .spinner {
+            width: 14px; height: 14px; border-radius: 50%; display: inline-block; vertical-align: -2px;
+            border: 2px solid rgba(255,255,255,0.15); border-top-color: var(--neon-cyan);
+            animation: spin 0.7s linear infinite; margin-right: 6px;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        .skeleton-card { height: 90px; border-radius: 16px; margin: 0 16px 14px 16px; }
+        .skeleton { background: linear-gradient(90deg, var(--card-bg) 25%, #141827 37%, var(--card-bg) 63%); background-size: 400% 100%; animation: shimmer 1.4s ease infinite; }
+        @keyframes shimmer { 0% { background-position: 100% 50%; } 100% { background-position: 0 50%; } }
         .tab-content.active { display: block; }
         .page-container { padding: 20px 16px; text-align: center; color: var(--text-sub); }
 
@@ -443,7 +479,7 @@
 
         <div class="section-title"><span>LATEST NEWS</span><span id="news-add-wrap"></span></div>
         <div id="news-list">
-            <div class="card" style="text-align:center; color:var(--text-sub); font-size:12px;">Memuat berita...</div>
+            <div class="skeleton skeleton-card"></div>
         </div>
 
         <div class="section-title"><span>MENU UTAMA</span></div>
@@ -522,7 +558,7 @@
                     <span id="info-add-wrap"></span>
                 </div>
                 <div id="info-list" style="display:flex; flex-direction:column; gap:12px;">
-                    <p style="font-size:11px; color:var(--text-sub);">Memuat...</p>
+                    <div class="skeleton" style="height:56px;border-radius:12px;"></div>
                 </div>
             </div>
         </div>
@@ -551,16 +587,16 @@
                 </div>
 
                 <div id="login-form">
-                    <div class="form-group"><label>Email</label><input type="email" id="login-email" class="form-input" placeholder="kamu@email.com"></div>
-                    <div class="form-group"><label>Password</label><input type="password" id="login-password" class="form-input" placeholder="••••••••"></div>
+                    <div class="form-group"><label>Email</label><input type="email" id="login-email" class="form-input" placeholder="kamu@email.com" autocomplete="email"></div>
+                    <div class="form-group"><label>Password</label><input type="password" id="login-password" class="form-input" placeholder="••••••••" autocomplete="current-password"></div>
                     <button class="form-btn" onclick="AuthUI.login()" id="login-btn">Masuk</button>
                     <div class="form-msg" id="login-msg"></div>
                 </div>
 
                 <div id="register-form" style="display:none;">
-                    <div class="form-group"><label>Username</label><input type="text" id="reg-username" class="form-input" placeholder="username unik"></div>
-                    <div class="form-group"><label>Email</label><input type="email" id="reg-email" class="form-input" placeholder="kamu@email.com"></div>
-                    <div class="form-group"><label>Password</label><input type="password" id="reg-password" class="form-input" placeholder="minimal 6 karakter"></div>
+                    <div class="form-group"><label>Username</label><input type="text" id="reg-username" class="form-input" placeholder="username unik" maxlength="40" autocomplete="username"></div>
+                    <div class="form-group"><label>Email</label><input type="email" id="reg-email" class="form-input" placeholder="kamu@email.com" autocomplete="email"></div>
+                    <div class="form-group"><label>Password</label><input type="password" id="reg-password" class="form-input" placeholder="minimal 6 karakter" autocomplete="new-password"></div>
                     <button class="form-btn" onclick="AuthUI.register()" id="register-btn">Buat Akun</button>
                     <div class="form-msg" id="register-msg"></div>
                 </div>
@@ -630,7 +666,7 @@
         <button class="nav-item" onclick="switchTab('info', this)">
             <svg class="nav-icon-svg" viewBox="0 0 24 24"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
             <span class="nav-label">Info</span>
-        </button
+        </button>
         <button class="nav-item" onclick="switchTab('tools', this)">
             <svg class="nav-icon-svg" viewBox="0 0 24 24"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
             <span class="nav-label">Tools</span>
@@ -647,4 +683,3 @@
     <script src="app.js"></script>
 </body>
 </html>
-d

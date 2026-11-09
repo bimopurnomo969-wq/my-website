@@ -11,6 +11,10 @@ let currentUser = null;
 let currentProfile = null;
 let presenceChannel = null;
 
+// Local escape helper — deliberately NOT dependent on tools.js's CU object.
+// Keeps auth/profile/admin/news working even if tools.js fails to load.
+function esc(s) { const d = document.createElement('div'); d.innerText = s ?? ''; return d.innerHTML; }
+
 // ---- Activity logging ----
 async function logActivity(action, meta = {}) {
   if (!currentUser) return;
@@ -21,6 +25,17 @@ async function logActivity(action, meta = {}) {
 function actionLabel(action) {
   const labels = { login: 'Masuk ke akun', tool_open: 'Membuka tool', post_add: 'Menambahkan post', post_delete: 'Menghapus post', profile_update: 'Memperbarui profil' };
   return labels[action] || action;
+}
+// Only http(s) links are allowed — blocks javascript:/data: URLs in bio links and post images.
+// The database enforces this too (see schema.sql §6b/6c); this just gives an instant, friendly error.
+function isSafeUrl(url) { return /^https?:\/\//i.test((url || '').trim()); }
+// Activity rows with a bit of context (which tool, which post) instead of just the bare action name.
+function activityDescription(a) {
+  const base = actionLabel(a.action);
+  const meta = a.meta || {};
+  if (a.action === 'tool_open' && meta.title) return `${base}: ${esc(meta.title)}`;
+  if (a.action === 'post_add' && meta.title) return `${base} (${meta.type === 'news' ? 'Berita' : 'Info'}): ${esc(meta.title)}`;
+  return esc(base);
 }
 
 // ---- Auth ----
@@ -123,14 +138,17 @@ function renderProfileSection() {
   document.getElementById('profile-username').innerText = p.username || currentUser.email;
   document.getElementById('profile-bio').innerText = p.bio || 'Belum ada bio.';
   const avatarEl = document.getElementById('profile-avatar');
-  avatarEl.innerHTML = p.avatar_url ? `<img src="${CU.esc(p.avatar_url)}">` : (p.username || '?')[0].toUpperCase();
+  avatarEl.innerHTML = p.avatar_url ? `<img src="${esc(p.avatar_url)}">` : (p.username || '?')[0].toUpperCase();
   document.getElementById('profile-access').innerText = p.role === 'owner' ? 'Owner / Root Admin' : 'Member';
   document.getElementById('profile-joined').innerText = new Date(p.created_at).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' });
   document.getElementById('profile-role-badge').innerHTML = p.role === 'owner' ? `<div class="profile-badge-owner">OWNER & FOUNDER</div>` : `<div class="profile-badge-member">MEMBER</div>`;
   document.getElementById('owner-admin-zone').style.display = p.role === 'owner' ? 'block' : 'none';
   const links = Array.isArray(p.links) ? p.links : [];
   document.getElementById('links-list').innerHTML = links.length
-    ? links.map(l => `<a href="${CU.esc(l.url)}" target="_blank" rel="noopener" class="link-item">${CU.esc(l.label)} <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 17L17 7M17 7H7M17 7V17"/></svg></a>`).join('')
+    ? links.map(l => isSafeUrl(l.url)
+        ? `<a href="${esc(l.url)}" target="_blank" rel="noopener noreferrer" class="link-item">${esc(l.label)} <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 17L17 7M17 7H7M17 7V17"/></svg></a>`
+        : `<div class="link-item" style="opacity:0.5;">${esc(l.label)} <span style="font-size:9px;color:var(--neon-pink);">tautan tidak valid</span></div>`
+      ).join('')
     : '<p style="font-size:11px;color:var(--text-sub);text-align:center;">Belum ada link.</p>';
   loadActivityList();
 }
@@ -139,16 +157,16 @@ async function loadActivityList() {
   const { data, count } = await sb.from('activity_log').select('*', { count: 'exact' }).eq('user_id', currentUser.id).order('created_at', { ascending: false }).limit(15);
   const countEl = document.getElementById('profile-activity-count'); if (countEl) countEl.innerText = count || 0;
   const el = document.getElementById('activity-list'); if (!el) return;
-  el.innerHTML = (data && data.length) ? data.map(a => `<div class="activity-item"><div class="activity-dot"></div><div><b>${CU.esc(actionLabel(a.action))}</b><span>${new Date(a.created_at).toLocaleString('id-ID')}</span></div></div>`).join('')
+  el.innerHTML = (data && data.length) ? data.map(a => `<div class="activity-item"><div class="activity-dot"></div><div><b>${activityDescription(a)}</b><span>${new Date(a.created_at).toLocaleString('id-ID')}</span></div></div>`).join('')
     : '<p style="font-size:11px;color:var(--text-sub);text-align:center;">Belum ada aktivitas.</p>';
 }
 
 const ProfileUI = {
   openEdit() {
     ModalUI.openCustom('Edit Profil', '', `
-      <div class="form-group"><label>Username</label><input class="form-input" id="edit-username" value="${CU.esc(currentProfile.username || '')}"></div>
-      <div class="form-group"><label>Bio</label><textarea class="form-textarea" id="edit-bio">${CU.esc(currentProfile.bio || '')}</textarea></div>
-      <div class="form-group"><label>URL Avatar (opsional)</label><input class="form-input" id="edit-avatar" value="${CU.esc(currentProfile.avatar_url || '')}" placeholder="https://..."></div>
+      <div class="form-group"><label>Username</label><input class="form-input" id="edit-username" maxlength="40" value="${esc(currentProfile.username || '')}"></div>
+      <div class="form-group"><label>Bio</label><textarea class="form-textarea" id="edit-bio" maxlength="500">${esc(currentProfile.bio || '')}</textarea></div>
+      <div class="form-group"><label>URL Avatar (opsional)</label><input class="form-input" id="edit-avatar" value="${esc(currentProfile.avatar_url || '')}" placeholder="https://..."></div>
       <button class="form-btn" onclick="ProfileUI.saveEdit()">Simpan</button>
       <div class="form-msg" id="edit-msg"></div>`);
   },
@@ -156,16 +174,21 @@ const ProfileUI = {
     const username = document.getElementById('edit-username').value.trim();
     const bio = document.getElementById('edit-bio').value.trim();
     const avatar_url = document.getElementById('edit-avatar').value.trim();
-    const { error } = await sb.from('profiles').update({ username, bio, avatar_url }).eq('id', currentUser.id);
     const msg = document.getElementById('edit-msg');
+    if (username.length > 40) { msg.className = 'form-msg error'; msg.innerText = 'Username maksimal 40 karakter.'; return; }
+    if (bio.length > 500) { msg.className = 'form-msg error'; msg.innerText = 'Bio maksimal 500 karakter.'; return; }
+    if (avatar_url && !isSafeUrl(avatar_url)) { msg.className = 'form-msg error'; msg.innerText = 'URL avatar harus diawali http:// atau https://'; return; }
+    const { error } = await sb.from('profiles').update({ username, bio, avatar_url }).eq('id', currentUser.id);
     if (error) { msg.className = 'form-msg error'; msg.innerText = error.message; return; }
     currentProfile = { ...currentProfile, username, bio, avatar_url };
     renderAuthState(); logActivity('profile_update', {}); ModalUI.close();
     ChronoStar.showToast('Profil diperbarui', 'success');
   },
   addLink() {
+    const links = Array.isArray(currentProfile.links) ? currentProfile.links : [];
+    if (links.length >= 10) { ChronoStar.showToast('Maksimal 10 bio link.', 'error'); return; }
     ModalUI.openCustom('Tambah Bio Link', '', `
-      <div class="form-group"><label>Label</label><input class="form-input" id="link-label" placeholder="mis: Instagram"></div>
+      <div class="form-group"><label>Label</label><input class="form-input" id="link-label" maxlength="40" placeholder="mis: Instagram"></div>
       <div class="form-group"><label>URL</label><input class="form-input" id="link-url" placeholder="https://..."></div>
       <button class="form-btn" onclick="ProfileUI.saveLink()">Tambah</button>
       <div class="form-msg" id="link-msg"></div>`);
@@ -175,6 +198,7 @@ const ProfileUI = {
     const url = document.getElementById('link-url').value.trim();
     const msg = document.getElementById('link-msg');
     if (!label || !url) { msg.className = 'form-msg error'; msg.innerText = 'Lengkapi label dan URL.'; return; }
+    if (!isSafeUrl(url)) { msg.className = 'form-msg error'; msg.innerText = 'URL harus diawali http:// atau https://'; return; }
     const links = Array.isArray(currentProfile.links) ? [...currentProfile.links] : [];
     links.push({ label, url });
     const { error } = await sb.from('profiles').update({ links }).eq('id', currentUser.id);
@@ -187,8 +211,8 @@ const ProfileUI = {
 const AdminUI = {
   addPost(type) {
     ModalUI.openCustom(type === 'news' ? 'Tambah Berita' : 'Tambah Informasi', 'Tampil untuk semua pengguna', `
-      <div class="form-group"><label>Judul</label><input class="form-input" id="post-title"></div>
-      <div class="form-group"><label>Isi</label><textarea class="form-textarea" id="post-content"></textarea></div>
+      <div class="form-group"><label>Judul</label><input class="form-input" id="post-title" maxlength="200"></div>
+      <div class="form-group"><label>Isi</label><textarea class="form-textarea" id="post-content" maxlength="5000"></textarea></div>
       ${type === 'news' ? '<div class="form-group"><label>URL Gambar (opsional)</label><input class="form-input" id="post-image" placeholder="https://..."></div>' : ''}
       <button class="form-btn" onclick="AdminUI.savePost('${type}')">Publikasikan</button>
       <div class="form-msg" id="post-msg"></div>`);
@@ -200,6 +224,7 @@ const AdminUI = {
     const image_url = imageEl ? imageEl.value.trim() : null;
     const msg = document.getElementById('post-msg');
     if (!title || !content) { msg.className = 'form-msg error'; msg.innerText = 'Lengkapi judul dan isi.'; return; }
+    if (image_url && !isSafeUrl(image_url)) { msg.className = 'form-msg error'; msg.innerText = 'URL gambar harus diawali http:// atau https://'; return; }
     const { error } = await sb.from('posts').insert({ type, title, content, image_url: image_url || null, created_by: currentUser.id });
     if (error) { msg.className = 'form-msg error'; msg.innerText = error.message; return; }
     ModalUI.close(); logActivity('post_add', { type, title });
@@ -215,12 +240,12 @@ const AdminUI = {
   },
   async openAllActivity() {
     const { data } = await sb.from('activity_log').select('*, profiles(username)').order('created_at', { ascending: false }).limit(50);
-    const html = (data && data.length) ? data.map(a => `<div class="activity-item"><div class="activity-dot"></div><div><b>${CU.esc((a.profiles && a.profiles.username) || 'user')}</b> — ${CU.esc(actionLabel(a.action))}<span>${new Date(a.created_at).toLocaleString('id-ID')}</span></div></div>`).join('') : '<p style="font-size:11px;color:var(--text-sub);">Belum ada aktivitas.</p>';
+    const html = (data && data.length) ? data.map(a => `<div class="activity-item"><div class="activity-dot"></div><div><b>${esc((a.profiles && a.profiles.username) || 'user')}</b> — ${activityDescription(a)}<span>${new Date(a.created_at).toLocaleString('id-ID')}</span></div></div>`).join('') : '<p style="font-size:11px;color:var(--text-sub);">Belum ada aktivitas.</p>';
     ModalUI.openCustom('Log Aktivitas Semua User', '50 aktivitas terbaru', html);
   },
   async openUserList() {
     const { data } = await sb.from('profiles').select('username, role, created_at').order('created_at', { ascending: false }).limit(100);
-    const html = (data && data.length) ? data.map(u => `<div class="activity-item"><div class="activity-dot" style="background:${u.role === 'owner' ? 'var(--neon-green)' : 'var(--neon-cyan)'}"></div><div><b>${CU.esc(u.username || '(tanpa nama)')}</b><span>${u.role.toUpperCase()} • bergabung ${new Date(u.created_at).toLocaleDateString('id-ID')}</span></div></div>`).join('') : '<p style="font-size:11px;color:var(--text-sub);">Belum ada member.</p>';
+    const html = (data && data.length) ? data.map(u => `<div class="activity-item"><div class="activity-dot" style="background:${u.role === 'owner' ? 'var(--neon-green)' : 'var(--neon-cyan)'}"></div><div><b>${esc(u.username || '(tanpa nama)')}</b><span>${u.role.toUpperCase()} • bergabung ${new Date(u.created_at).toLocaleDateString('id-ID')}</span></div></div>`).join('') : '<p style="font-size:11px;color:var(--text-sub);">Belum ada member.</p>';
     ModalUI.openCustom('Daftar Member', `${data ? data.length : 0} akun terdaftar`, html);
   }
 };
@@ -232,10 +257,10 @@ async function loadNews() {
   if (error || !data || !data.length) { el.innerHTML = `<div class="card" style="text-align:center;color:var(--text-sub);font-size:12px;">Belum ada berita.</div>`; return; }
   el.innerHTML = data.map(n => `
     <div class="news-post" style="margin:0 16px 14px 16px;">
-      ${n.image_url ? `<img src="${CU.esc(n.image_url)}" alt="">` : ''}
+      ${n.image_url ? `<img src="${esc(n.image_url)}" alt="">` : ''}
       <div class="news-post-body">
-        <h4>${CU.esc(n.title)}</h4>
-        <p>${CU.esc(n.content)}</p>
+        <h4>${esc(n.title)}</h4>
+        <p>${esc(n.content)}</p>
         <div class="news-post-meta"><span>${new Date(n.created_at).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' })}</span>${currentProfile && currentProfile.role === 'owner' ? `<button class="post-del-btn" onclick="AdminUI.deletePost(${n.id},'news')">Hapus</button>` : ''}</div>
       </div>
     </div>`).join('');
@@ -247,10 +272,10 @@ async function loadInfo() {
   el.innerHTML = data.map(n => `
     <div style="background:#121522;border:1px solid var(--card-border);padding:12px;border-radius:12px;">
       <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">
-        <b style="font-size:12px;color:var(--text-main);">${CU.esc(n.title)}</b>
+        <b style="font-size:12px;color:var(--text-main);">${esc(n.title)}</b>
         ${currentProfile && currentProfile.role === 'owner' ? `<button class="post-del-btn" onclick="AdminUI.deletePost(${n.id},'info')">Hapus</button>` : ''}
       </div>
-      <p style="font-size:11px;color:var(--text-sub);margin:4px 0 0 0;white-space:pre-wrap;">${CU.esc(n.content)}</p>
+      <p style="font-size:11px;color:var(--text-sub);margin:4px 0 0 0;white-space:pre-wrap;">${esc(n.content)}</p>
     </div>`).join('');
 }
 
@@ -275,18 +300,18 @@ async function loadMemberCount() {
 const ModalUI = {
   open(tool) {
     const box = document.getElementById('modal-box');
-    box.innerHTML = `<div class="modal-header"><div><h3>${CU.esc(tool.title)}</h3><p>${CU.esc(tool.desc)}</p></div><div class="modal-close" onclick="ModalUI.close()">✕</div></div><div id="modal-tool-root"></div>`;
+    box.innerHTML = `<div class="modal-header"><div><h3>${esc(tool.title)}</h3><p>${esc(tool.desc)}</p></div><div class="modal-close" onclick="ModalUI.close()">✕</div></div><div id="modal-tool-root"></div>`;
     document.getElementById('modal-overlay').classList.add('open');
     tool.render(document.getElementById('modal-tool-root'));
     logActivity('tool_open', { tool: tool.id, title: tool.title });
   },
   openCustom(title, sub, html) {
     const box = document.getElementById('modal-box');
-    box.innerHTML = `<div class="modal-header"><div><h3>${CU.esc(title)}</h3>${sub ? `<p>${CU.esc(sub)}</p>` : ''}</div><div class="modal-close" onclick="ModalUI.close()">✕</div></div><div>${html}</div>`;
+    box.innerHTML = `<div class="modal-header"><div><h3>${esc(title)}</h3>${sub ? `<p>${esc(sub)}</p>` : ''}</div><div class="modal-close" onclick="ModalUI.close()">✕</div></div><div>${html}</div>`;
     document.getElementById('modal-overlay').classList.add('open');
   },
   close() {
-    if (ToolRuntime.cleanup) { ToolRuntime.cleanup(); ToolRuntime.cleanup = null; }
+    if (typeof ToolRuntime !== 'undefined' && ToolRuntime.cleanup) { ToolRuntime.cleanup(); ToolRuntime.cleanup = null; }
     document.getElementById('modal-overlay').classList.remove('open');
     document.getElementById('modal-box').innerHTML = '';
   }
@@ -302,8 +327,8 @@ function renderChips() {
 function toolCardHtml(t) {
   return `<div class="tool-card" data-tool="${t.id}">
       <div class="t-icon"><svg viewBox="0 0 24 24">${CAT_ICON[t.cat]}</svg></div>
-      <h4>${CU.esc(t.title)}</h4>
-      <p>${CU.esc(t.desc)}</p>
+      <h4>${esc(t.title)}</h4>
+      <p>${esc(t.desc)}</p>
     </div>`;
 }
 function renderToolGrid(query) {
@@ -383,26 +408,49 @@ class ChronoStarEngine {
     const toast = document.createElement('div');
     const color = type === 'error' ? '#ff0055' : (type === 'success' ? '#00ff66' : '#ffffff');
     Object.assign(toast.style, { background: '#0b0d14', border: `1px solid ${color}`, color: '#fff', padding: '12px 18px', borderRadius: '12px', fontSize: '12px', fontWeight: '600', boxShadow: '0 0 10px rgba(255,255,255,0.1)', transition: 'all 0.3s ease', opacity: '0', transform: 'translateY(-10px)', maxWidth: '280px' });
-    toast.innerText = `[SYS] ${message}`; box.appendChild(toast);
+    const icon = type === 'error' ? '✕' : (type === 'success' ? '✓' : 'ℹ');
+    toast.innerText = `${icon} ${message}`; box.appendChild(toast);
     requestAnimationFrame(() => { toast.style.opacity = '1'; toast.style.transform = 'translateY(0)'; });
     setTimeout(() => { toast.style.opacity = '0'; toast.style.transform = 'translateY(-10px)'; setTimeout(() => toast.remove(), 300); }, 3000);
   }
-  handleSearch(query) { if (query.trim().length > 0) switchTabByNav('tools'); renderToolGrid(query); }
+  handleSearch(query) { if (query.trim().length > 0) switchTabByNav('tools'); if (typeof TOOLS !== 'undefined') renderToolGrid(query); }
 }
 const ChronoStar = new ChronoStarEngine();
 
 // ---- Init ----
 document.addEventListener('DOMContentLoaded', async () => {
-  const label = document.getElementById('tools-count-label'); if (label) label.innerText = TOOLS.length + '+ fitur cyber security';
-  renderChips(); renderToolGrid();
-  loadNews(); loadInfo(); loadMemberCount();
-
-  const { data: { session } } = await sb.auth.getSession();
-  if (session && session.user) await onAuthed(session.user);
-  else renderAuthState();
-
+  // 1) Restore the session FIRST and on its own — this must never be blocked by
+  //    anything below it, or a reload/reopen looks like it "logs you out" even
+  //    though Supabase still has a valid session saved in the browser.
+  try {
+    const { data: { session } } = await sb.auth.getSession();
+    if (session && session.user) await onAuthed(session.user);
+    else renderAuthState();
+  } catch (e) {
+    console.error('Session restore failed:', e);
+    renderAuthState();
+  }
   sb.auth.onAuthStateChange((event) => {
     if (event === 'SIGNED_OUT') { currentUser = null; currentProfile = null; renderAuthState(); }
   });
+
+  // 2) News / info / member count — independent of each other and of #3 below.
+  try { loadNews(); } catch (e) { console.error('loadNews failed:', e); }
+  try { loadInfo(); } catch (e) { console.error('loadInfo failed:', e); }
+  try { loadMemberCount(); } catch (e) { console.error('loadMemberCount failed:', e); }
+
+  // 3) Tools tab — needs tools.js. If that file didn't load (wrong path, not
+  //    uploaded, 404, etc.) this now shows a clear message instead of a
+  //    silent blank tab, and it no longer takes anything above it down with it.
+  try {
+    if (typeof TOOLS === 'undefined' || typeof CATEGORIES === 'undefined') throw new Error('tools.js tidak termuat');
+    const label = document.getElementById('tools-count-label'); if (label) label.innerText = TOOLS.length + '+ fitur cyber security';
+    renderChips(); renderToolGrid();
+  } catch (e) {
+    console.error('Tools module failed:', e);
+    const grid = document.getElementById('tool-grid');
+    if (grid) grid.innerHTML = `<div class="tool-empty" style="color:var(--neon-pink);line-height:1.6;">⚠️ Modul tools.js gagal dimuat.<br>Cek file <b>tools.js</b> ada di folder yang sama dengan index.html di repo-mu (nama persis, huruf kecil semua), lalu hard-refresh halaman ini.</div>`;
+    const sub = document.getElementById('tools-subtitle'); if (sub) sub.innerText = 'GAGAL MEMUAT MODUL';
+  }
 });
 window.addEventListener('beforeunload', () => { if (presenceChannel) sb.removeChannel(presenceChannel); });

@@ -622,7 +622,7 @@
             <div class="section-title"><span>BIO LINKS</span><span class="add-btn" onclick="ProfileUI.addLink()">+ TAMBAH</span></div>
             <div class="card" id="links-list"><p style="font-size:11px;color:var(--text-sub);text-align:center;">Belum ada link.</p></div>
 
-            <div class="section-title"><span>RIWAYAT AKTIVITAS</span></div>
+            <div class="section-title"><span>RIWAYAT AKTIVITAS</span><span class="add-btn" style="background:rgba(255,0,85,0.1);color:var(--neon-pink);border-color:rgba(255,0,85,0.3);" onclick="ProfileUI.confirmClearActivity()">BERSIHKAN</span></div>
             <div class="card" id="activity-list"><p style="font-size:11px;color:var(--text-sub);text-align:center;">Belum ada aktivitas.</p></div>
 
             <div id="owner-admin-zone" style="display:none;">
@@ -637,7 +637,13 @@
                     <div class="cyber-btn-long" onclick="AdminUI.openUserList()">
                         <div class="cyber-btn-content">
                             <svg class="cyber-btn-icon" viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
-                            <div class="cyber-btn-text"><h4>Daftar Member</h4><p>Lihat seluruh akun terdaftar</p></div>
+                            <div class="cyber-btn-text"><h4>Daftar Member</h4><p>Lihat profil, hapus, atau pulihkan akun</p></div>
+                        </div>
+                    </div>
+                    <div class="cyber-btn-long" onclick="AdminUI.confirmClearAllActivity()">
+                        <div class="cyber-btn-content">
+                            <svg class="cyber-btn-icon" viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                            <div class="cyber-btn-text"><h4>Bersihkan Cache Aktivitas</h4><p>Hapus seluruh riwayat aktivitas semua user</p></div>
                         </div>
                     </div>
                 </div>

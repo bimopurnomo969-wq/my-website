@@ -42,6 +42,13 @@ function activityDescription(a) {
 async function onAuthed(user, opts = {}) {
   currentUser = user;
   await loadProfile();
+  if (currentProfile && currentProfile.banned) {
+    await sb.auth.signOut();
+    currentUser = null; currentProfile = null;
+    renderAuthState();
+    ChronoStar.showToast('Akun ini telah dinonaktifkan oleh admin.', 'error');
+    return;
+  }
   setupPresence();
   renderAuthState();
   if (opts.logLogin) logActivity('login', {});
@@ -78,7 +85,13 @@ const AuthUI = {
     btn.disabled = true; msg.className = 'form-msg'; msg.innerText = 'Memproses...';
     const { data, error } = await sb.auth.signInWithPassword({ email, password });
     btn.disabled = false;
-    if (error) { msg.className = 'form-msg error'; msg.innerText = error.message; return; }
+    if (error) {
+      msg.className = 'form-msg error';
+      msg.innerText = /email not confirmed/i.test(error.message)
+        ? 'Email belum diverifikasi. Cek inbox kamu dan klik link konfirmasi dulu sebelum masuk.'
+        : error.message;
+      return;
+    }
     msg.className = 'form-msg success'; msg.innerText = 'Berhasil masuk!';
     await onAuthed(data.user, { logLogin: true });
     ChronoStar.showToast('Selamat datang kembali!', 'success');
@@ -204,6 +217,19 @@ const ProfileUI = {
     const { error } = await sb.from('profiles').update({ links }).eq('id', currentUser.id);
     if (error) { msg.className = 'form-msg error'; msg.innerText = error.message; return; }
     currentProfile.links = links; renderProfileSection(); ModalUI.close();
+  },
+  confirmClearActivity() {
+    ModalUI.openCustom('Bersihkan Riwayat Aktivitas', '', `
+      <p style="font-size:13px;color:var(--text-main);margin-bottom:16px;line-height:1.5;">Ini akan menghapus seluruh riwayat aktivitasmu secara permanen. Tidak bisa dibatalkan.</p>
+      <button class="form-btn danger" onclick="ProfileUI.clearActivity()" style="margin-bottom:8px;">Ya, Bersihkan</button>
+      <button class="form-btn secondary" onclick="ModalUI.close()">Batal</button>`);
+  },
+  async clearActivity() {
+    const { error } = await sb.from('activity_log').delete().eq('user_id', currentUser.id);
+    if (error) { ChronoStar.showToast('Gagal: ' + error.message, 'error'); return; }
+    ModalUI.close();
+    ChronoStar.showToast('Riwayat aktivitas dibersihkan', 'success');
+    loadActivityList();
   }
 };
 
@@ -244,9 +270,83 @@ const AdminUI = {
     ModalUI.openCustom('Log Aktivitas Semua User', '50 aktivitas terbaru', html);
   },
   async openUserList() {
-    const { data } = await sb.from('profiles').select('username, role, created_at').order('created_at', { ascending: false }).limit(100);
-    const html = (data && data.length) ? data.map(u => `<div class="activity-item"><div class="activity-dot" style="background:${u.role === 'owner' ? 'var(--neon-green)' : 'var(--neon-cyan)'}"></div><div><b>${esc(u.username || '(tanpa nama)')}</b><span>${u.role.toUpperCase()} • bergabung ${new Date(u.created_at).toLocaleDateString('id-ID')}</span></div></div>`).join('') : '<p style="font-size:11px;color:var(--text-sub);">Belum ada member.</p>';
-    ModalUI.openCustom('Daftar Member', `${data ? data.length : 0} akun terdaftar`, html);
+    const { data } = await sb.from('profiles').select('id, username, role, banned, confirmed_at, created_at').order('created_at', { ascending: false }).limit(100);
+    const html = (data && data.length) ? data.map(u => `
+      <div class="activity-item" style="cursor:pointer;${u.banned ? 'opacity:0.5;' : ''}" onclick="AdminUI.viewMember('${u.id}')">
+        <div class="activity-dot" style="background:${u.role === 'owner' ? 'var(--neon-green)' : (u.banned ? 'var(--neon-pink)' : 'var(--neon-cyan)')}"></div>
+        <div><b>${esc(u.username || '(tanpa nama)')}</b>
+          <span>${u.role.toUpperCase()} • ${u.confirmed_at ? 'terverifikasi' : 'belum verifikasi'}${u.banned ? ' • dinonaktifkan' : ''} • bergabung ${new Date(u.created_at).toLocaleDateString('id-ID')}</span>
+        </div>
+      </div>`).join('') : '<p style="font-size:11px;color:var(--text-sub);">Belum ada member.</p>';
+    ModalUI.openCustom('Daftar Member', `${data ? data.length : 0} akun terdaftar — ketuk untuk lihat profil`, html);
+  },
+  async viewMember(userId) {
+    const { data: p } = await sb.from('profiles').select('*').eq('id', userId).single();
+    if (!p) { ChronoStar.showToast('Member tidak ditemukan', 'error'); return; }
+    const { count: activityCount } = await sb.from('activity_log').select('*', { count: 'exact', head: true }).eq('user_id', userId);
+    const links = Array.isArray(p.links) ? p.links : [];
+    const uname = esc(p.username || 'member');
+    const actions = p.role === 'owner'
+      ? '<p style="font-size:11px;color:var(--text-sub);text-align:center;">Akun owner tidak bisa dihapus/dinonaktifkan dari sini.</p>'
+      : p.banned
+        ? `<button class="form-btn" onclick="AdminUI.restoreAccount('${p.id}')">Pulihkan Akun</button>`
+        : `<button class="form-btn secondary" onclick="AdminUI.clearUserActivity('${p.id}')" style="margin-bottom:10px;">Bersihkan Aktivitas User Ini</button>
+           <button class="form-btn danger" onclick="AdminUI.confirmDeleteAccount('${p.id}','${uname}')">Hapus Akun</button>`;
+    const html = `
+      <div style="text-align:center;margin-bottom:16px;">
+        <div class="profile-big-avatar" style="margin:0 auto 10px auto;">${p.avatar_url ? `<img src="${esc(p.avatar_url)}">` : (p.username || '?')[0].toUpperCase()}</div>
+        <div style="font-weight:800;font-size:15px;color:#fff;">${uname}</div>
+        ${p.role === 'owner' ? '<div class="profile-badge-owner">OWNER & FOUNDER</div>' : '<div class="profile-badge-member">MEMBER</div>'}
+        ${p.banned ? '<div style="margin-top:6px;font-size:10px;color:var(--neon-pink);font-weight:800;">⛔ AKUN DINONAKTIFKAN</div>' : ''}
+      </div>
+      <p style="font-size:12px;color:var(--text-sub);text-align:center;margin-bottom:16px;">${esc(p.bio || 'Belum ada bio.')}</p>
+      <div class="profile-info-grid" style="margin:0 0 16px 0;">
+        <div class="profile-info-box"><span>STATUS EMAIL</span><b>${p.confirmed_at ? 'Terverifikasi' : 'Belum verifikasi'}</b></div>
+        <div class="profile-info-box"><span>BERGABUNG</span><b>${new Date(p.created_at).toLocaleDateString('id-ID')}</b></div>
+        <div class="profile-info-box"><span>TOTAL AKTIVITAS</span><b>${activityCount || 0}</b></div>
+        <div class="profile-info-box"><span>BIO LINKS</span><b>${links.length}</b></div>
+      </div>
+      ${links.length ? `<div style="margin-bottom:16px;">${links.map(l => isSafeUrl(l.url) ? `<a href="${esc(l.url)}" target="_blank" rel="noopener noreferrer" class="link-item">${esc(l.label)}</a>` : '').join('')}</div>` : ''}
+      ${actions}`;
+    ModalUI.openCustom('Profil Member', '', html);
+  },
+  confirmDeleteAccount(userId, username) {
+    ModalUI.openCustom('Konfirmasi Hapus Akun', '', `
+      <p style="font-size:13px;color:var(--text-main);margin-bottom:16px;line-height:1.5;">Yakin ingin menghapus akun <b>${username}</b>? Akun tidak akan bisa login lagi dan profilnya (nama, bio, link) akan dikosongkan — riwayat aktivitasnya juga dihapus.<br><br>Bisa dipulihkan lewat tombol "Pulihkan Akun" di profil yang sama.</p>
+      <button class="form-btn danger" onclick="AdminUI.deleteAccount('${userId}')" style="margin-bottom:8px;">Ya, Hapus Akun</button>
+      <button class="form-btn secondary" onclick="ModalUI.close()">Batal</button>`);
+  },
+  async deleteAccount(userId) {
+    const { error } = await sb.from('profiles').update({ banned: true, username: '[akun dihapus]', bio: '', avatar_url: null, links: [] }).eq('id', userId);
+    if (error) { ChronoStar.showToast('Gagal: ' + error.message, 'error'); return; }
+    await sb.from('activity_log').delete().eq('user_id', userId);
+    logActivity('account_moderation', { target: userId, action: 'delete' });
+    ChronoStar.showToast('Akun dihapus', 'success');
+    ModalUI.close();
+  },
+  async restoreAccount(userId) {
+    const { error } = await sb.from('profiles').update({ banned: false }).eq('id', userId);
+    if (error) { ChronoStar.showToast('Gagal: ' + error.message, 'error'); return; }
+    logActivity('account_moderation', { target: userId, action: 'restore' });
+    ChronoStar.showToast('Akun dipulihkan', 'success');
+    AdminUI.viewMember(userId);
+  },
+  async clearUserActivity(userId) {
+    const { error } = await sb.from('activity_log').delete().eq('user_id', userId);
+    if (error) { ChronoStar.showToast('Gagal: ' + error.message, 'error'); return; }
+    ChronoStar.showToast('Aktivitas user dibersihkan', 'success');
+  },
+  confirmClearAllActivity() {
+    ModalUI.openCustom('Bersihkan Cache Aktivitas', '', `
+      <p style="font-size:13px;color:var(--text-main);margin-bottom:16px;line-height:1.5;">Ini akan menghapus SELURUH riwayat aktivitas semua pengguna secara permanen. Tidak bisa dibatalkan.</p>
+      <button class="form-btn danger" onclick="AdminUI.clearAllActivity()" style="margin-bottom:8px;">Ya, Hapus Semua</button>
+      <button class="form-btn secondary" onclick="ModalUI.close()">Batal</button>`);
+  },
+  async clearAllActivity() {
+    const { error } = await sb.from('activity_log').delete().gte('id', 0);
+    if (error) { ChronoStar.showToast('Gagal: ' + error.message, 'error'); return; }
+    ChronoStar.showToast('Cache aktivitas dibersihkan', 'success');
+    ModalUI.close();
   }
 };
 
@@ -292,7 +392,7 @@ function setupPresence() {
   });
 }
 async function loadMemberCount() {
-  const { count } = await sb.from('profiles').select('*', { count: 'exact', head: true });
+  const { count } = await sb.from('profiles').select('*', { count: 'exact', head: true }).eq('banned', false).not('confirmed_at', 'is', null);
   const el = document.getElementById('stat-members'); if (el) el.innerText = count ?? 0;
 }
 
